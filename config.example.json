@@ -1,0 +1,7 @@
+{
+  "kakao": {
+    "rest_api_key": "YOUR_REST_API_KEY",
+    "access_token": "",
+    "refresh_token": ""
+  }
+}
