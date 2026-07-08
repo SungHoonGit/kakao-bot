@@ -3,8 +3,8 @@
 job-scraper 의 daily/ 결과를 읽어 카카오톡으로 전송합니다.
 
 Usage:
-    python3 scripts/send_daily.py ../job-scraper/daily/react
-    python3 scripts/send_daily.py ../job-scraper/daily/react ../job-scraper/daily/java
+    python3 scripts/send_daily.py ../job-scraper/daily                  # flat 구조
+    python3 scripts/send_daily.py ../job-scraper/daily/react ../job-scraper/daily/java  # profile 구조
 """
 import json
 import re
@@ -15,17 +15,18 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from kakao_api import KakaoAPI
 
 
-def read_daily_md(path: str) -> str:
-    """daily/*.md 파일을 읽어 요약 텍스트로 반환"""
-    files = sorted(os.listdir(path)) if os.path.isdir(path) else []
-    md_files = [f for f in files if f.endswith('.md')]
-    if not md_files:
-        return ""
+def read_md_files(path: str) -> list:
+    """디렉토리에서 *.md 파일 목록 반환 (최신순)"""
+    if not os.path.isdir(path):
+        return []
+    files = sorted((f for f in os.listdir(path) if f.endswith('.md') and not f.endswith('_backup.md')), reverse=True)
+    return files
 
-    latest = md_files[-1]
-    content = open(os.path.join(path, latest), encoding='utf-8').read()
 
-    today = latest.replace('.md', '')
+def summarize_md(path: str, filename: str) -> str:
+    """md 파일 하나를 요약"""
+    content = open(os.path.join(path, filename), encoding='utf-8').read()
+    today = filename.replace('.md', '')
     lines = content.strip().split('\n')
     job_lines = [l for l in lines if l.startswith('| ') and not l.startswith('| 회사명') and '---' not in l]
 
@@ -45,20 +46,35 @@ def read_daily_md(path: str) -> str:
     return summary
 
 
-def build_message(profile_dir_map: dict) -> str:
-    """프로파일별 daily 결과를 읽어 하나의 텍스트 메시지로 구성"""
-    parts = []
-    for profile, dir_path in profile_dir_map.items():
-        s = read_daily_md(dir_path)
-        if s:
-            parts.append(f"📋 {profile}\n{s}")
-    if not parts:
+def collect_daily_results(daily_root: str) -> str:
+    """
+    daily_root 아래에서 결과를 수집합니다.
+    - flat: .md 파일이 직접 있음
+    - profile: react/, java/ 등 서브디렉토리가 있음
+    """
+    if not os.path.isdir(daily_root):
         return ""
 
-    today_text = os.path.basename(dir_path)
-    text = f"🔔 채용공고 업데이트 ({list(profile_dir_map.keys())[0]} 외)\n\n"
-    text += "\n".join(parts)
-    return text
+    entries = os.listdir(daily_root)
+    subdirs = sorted([d for d in entries if os.path.isdir(os.path.join(daily_root, d)) and not d.startswith('.')])
+
+    parts = []
+    if subdirs:
+        for sd in subdirs:
+            sd_path = os.path.join(daily_root, sd)
+            mds = read_md_files(sd_path)
+            if mds:
+                s = summarize_md(sd_path, mds[0])
+                if s:
+                    parts.append(f"📋 {sd}\n{s}")
+    else:
+        mds = read_md_files(daily_root)
+        if mds:
+            s = summarize_md(daily_root, mds[0])
+            if s:
+                parts.append(s)
+
+    return "\n".join(parts)
 
 
 def main():
@@ -74,19 +90,21 @@ def main():
         print("  [kakao] 토큰 갱신...")
         api.refresh_access_token()
 
-    profile_dirs = {}
+    all_parts = []
     for d in sys.argv[1:]:
-        name = os.path.basename(d.rstrip('/'))
-        profile_dirs[name] = d
+        text = collect_daily_results(d)
+        if text:
+            all_parts.append(text)
 
-    text = build_message(profile_dirs)
-    if not text:
+    if not all_parts:
         print("전송할 데이터가 없습니다. (daily/*.md 없음)")
         sys.exit(0)
 
+    full_text = "🔔 채용공고 업데이트\n\n" + "\n\n".join(all_parts)
+
     template = {
         "object_type": "text",
-        "text": text[:1000],
+        "text": full_text[:1000],
         "link": {
             "web_url": "https://github.com/SungHoonGit/job-scraper",
             "mobile_web_url": "https://github.com/SungHoonGit/job-scraper"
